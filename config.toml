@@ -1,0 +1,9 @@
+[sources.udp]
+type ="socket"
+mode="udp"
+address="0.0.0.0:12201"
+
+[sinks.console]
+type="console"
+inputs=["udp"]
+encoding.codec="json"

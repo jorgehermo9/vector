@@ -3,7 +3,9 @@ use crate::BytesDecoder;
 use super::BoxedFramingError;
 use bytes::{Buf, Bytes, BytesMut};
 use derivative::Derivative;
+use flate2::read::{GzDecoder, ZlibDecoder};
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio;
@@ -13,6 +15,9 @@ use tracing::{info, warn};
 use vector_config::configurable_component;
 
 const GELF_MAGIC: [u8; 2] = [0x1e, 0x0f];
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+// TODO: check for zlib magic
+const ZLIB_MAGIC: [u8; 2] = [0x78, 0x01];
 const GELF_MAX_TOTAL_CHUNKS: u8 = 128;
 const DEFAULT_TIMEOUT_MILLIS: u64 = 5000;
 const DEFAULT_PENDING_MESSAGES_LIMIT: usize = 1000;
@@ -121,9 +126,37 @@ impl MessageState {
             for chunk in chunks {
                 message.extend_from_slice(chunk);
             }
-            Some(message.freeze())
+            Some(dbg!(self.decompress(message.freeze())))
         } else {
             None
+        }
+    }
+
+    fn decompress(&self, message: Bytes) -> Bytes {
+        let Some(magic) = message.get(0..2).map(|b| [b[0], b[1]]) else {
+            dbg!("no magic");
+            return message;
+        };
+
+        match magic {
+            GZIP_MAGIC => {
+                dbg!("gzip input");
+                let mut decoder = GzDecoder::new(&message[..]);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed).unwrap();
+                Bytes::from(decompressed)
+            }
+            ZLIB_MAGIC => {
+                dbg!("zlib input");
+                let mut decoder = ZlibDecoder::new(&message[..]);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed).unwrap();
+                Bytes::from(decompressed)
+            }
+            _ => {
+                dbg!("no compression");
+                message
+            }
         }
     }
 }
