@@ -126,41 +126,40 @@ impl MessageState {
             for chunk in chunks {
                 message.extend_from_slice(chunk);
             }
-            Some(dbg!(self.decompress(message.freeze())))
+            Some(message.freeze())
         } else {
             None
         }
     }
+}
 
-    fn decompress(&self, message: Bytes) -> Bytes {
-        let Some(magic) = message.get(0..2).map(|b| [b[0], b[1]]) else {
-            dbg!("no magic");
-            return message;
-        };
+fn decompress(message: Bytes) -> Bytes {
+    let Some(magic) = message.get(0..2).map(|b| [b[0], b[1]]) else {
+        dbg!("no magic");
+        return message;
+    };
 
-        match magic {
-            GZIP_MAGIC => {
-                dbg!("gzip input");
-                let mut decoder = GzDecoder::new(&message[..]);
-                let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed).unwrap();
-                Bytes::from(decompressed)
-            }
-            ZLIB_MAGIC => {
-                dbg!("zlib input");
-                let mut decoder = ZlibDecoder::new(&message[..]);
-                let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed).unwrap();
-                Bytes::from(decompressed)
-            }
-            _ => {
-                dbg!("no compression");
-                message
-            }
+    match magic {
+        GZIP_MAGIC => {
+            dbg!("gzip input");
+            let mut decoder = GzDecoder::new(&message[..]);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).unwrap();
+            Bytes::from(decompressed)
+        }
+        ZLIB_MAGIC => {
+            dbg!("zlib input");
+            let mut decoder = ZlibDecoder::new(&message[..]);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).unwrap();
+            Bytes::from(decompressed)
+        }
+        _ => {
+            dbg!("no compression");
+            message
         }
     }
 }
-
 /// A codec for handling GELF messages that may be chunked. The implementation is based on [Graylog's GELF documentation](https://go2docs.graylog.org/5-0/getting_in_log_data/gelf.html#GELFviaUDP)
 /// and [Graylog's go-gelf library](https://github.com/Graylog2/go-gelf/blob/v1/gelf/reader.go).
 #[derive(Debug, Clone)]
@@ -309,9 +308,11 @@ impl ChunkedGelfDecoder {
     pub fn decode_message(&mut self, mut src: Bytes) -> Result<Option<Bytes>, BoxedFramingError> {
         let magic = src.get(0..2);
         if magic.is_some_and(|magic| magic == GELF_MAGIC) {
+            dbg!("chunked");
             src.advance(2);
             self.decode_chunk(src)
         } else {
+            dbg!("not chunked");
             Ok(Some(src))
         }
     }
@@ -341,6 +342,7 @@ impl Decoder for ChunkedGelfDecoder {
             .decode(src)?
             .and_then(|frame| self.decode_message(frame).transpose())
             .transpose()
+            .map(|message| message.map(decompress))
     }
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if buf.is_empty() {
@@ -351,6 +353,7 @@ impl Decoder for ChunkedGelfDecoder {
             .decode_eof(buf)?
             .and_then(|frame| self.decode_message(frame).transpose())
             .transpose()
+            .map(|message| message.map(decompress))
     }
 }
 
