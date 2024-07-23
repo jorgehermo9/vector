@@ -140,6 +140,7 @@ serde = { version = "1.0.204", default-features = false, features = ["alloc", "d
 toml = { version = "0.8.14", default-features = false, features = ["display", "parse"] }
 vrl = { version = "0.16.1", features = ["arbitrary", "cli", "test", "test_framework"] }
 tokio = { version = "1.38.0", default-features = false, features = ["full"] }
+flate2 = { version = "1.0.30", default-features = false, features = ["default"] }
 
 [dependencies]
 pin-project.workspace = true
@@ -277,7 +278,7 @@ dyn-clone = { version = "1.0.17", default-features = false }
 encoding_rs = { version = "0.8.34", default-features = false, features = ["serde"] }
 enum_dispatch = { version = "0.3.13", default-features = false }
 exitcode = { version = "1.1.2", default-features = false }
-flate2 = { version = "1.0.30", default-features = false, features = ["default"] }
+flate2.workspace = true
 futures-util = { version = "0.3.29", default-features = false }
 glob = { version = "0.3.1", default-features = false }
 governor = { version = "0.6.3", default-features = false, features = ["dashmap", "jitter", "std"], optional = true }
