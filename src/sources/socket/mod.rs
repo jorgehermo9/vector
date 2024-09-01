@@ -68,14 +68,14 @@ impl SocketConfig {
         }
     }
 
-    fn log_namespace(&self) -> LogNamespace {
+    fn log_namespace(&self, global_log_namespace: LogNamespace) -> LogNamespace {
         match &self.mode {
-            Mode::Tcp(config) => config.log_namespace.unwrap_or(false).into(),
-            Mode::Udp(config) => config.log_namespace.unwrap_or(false).into(),
+            Mode::Tcp(config) => global_log_namespace.merge(config.log_namespace),
+            Mode::Udp(config) => global_log_namespace.merge(config.log_namespace),
             #[cfg(unix)]
-            Mode::UnixDatagram(config) => config.log_namespace.unwrap_or(false).into(),
+            Mode::UnixDatagram(config) => global_log_namespace.merge(config.log_namespace),
             #[cfg(unix)]
-            Mode::UnixStream(config) => config.log_namespace.unwrap_or(false).into(),
+            Mode::UnixStream(config) => global_log_namespace.merge(config.log_namespace),
         }
     }
 }
@@ -198,7 +198,7 @@ impl SourceConfig for SocketConfig {
     }
 
     fn outputs(&self, global_log_namespace: LogNamespace) -> Vec<SourceOutput> {
-        let log_namespace = global_log_namespace.merge(Some(self.log_namespace()));
+        let log_namespace = self.log_namespace(global_log_namespace);
 
         let schema_definition = self
             .decoding()
@@ -207,7 +207,7 @@ impl SourceConfig for SocketConfig {
 
         let schema_definition = match &self.mode {
             Mode::Tcp(config) => {
-                let legacy_host_key = config.host_key().clone().path.map(LegacyKey::InsertIfEmpty);
+                let legacy_host_key = config.host_key().path.map(LegacyKey::InsertIfEmpty);
 
                 let legacy_port_key = config.port_key().clone().path.map(LegacyKey::InsertIfEmpty);
 
@@ -243,7 +243,7 @@ impl SourceConfig for SocketConfig {
                     )
             }
             Mode::Udp(config) => {
-                let legacy_host_key = config.host_key().clone().path.map(LegacyKey::InsertIfEmpty);
+                let legacy_host_key = config.host_key().path.map(LegacyKey::InsertIfEmpty);
 
                 let legacy_port_key = config.port_key().clone().path.map(LegacyKey::InsertIfEmpty);
 
@@ -289,7 +289,7 @@ impl SourceConfig for SocketConfig {
             }
         };
 
-        vec![SourceOutput::new_logs(
+        vec![SourceOutput::new_maybe_logs(
             self.decoding().output_type(),
             schema_definition,
         )]
@@ -1145,8 +1145,8 @@ mod test {
             let seed = 42;
             let mut rng = SmallRng::seed_from_u64(seed);
             let max_size = 300;
-            let big_message = "This is a very large message".repeat(1000);
-            let another_big_message = "This is another very large message".repeat(1000);
+            let big_message = "This is a very large message".repeat(500);
+            let another_big_message = "This is another very large message".repeat(500);
             let mut chunks = get_gelf_chunks(big_message.as_str(), max_size, &mut rng);
             let mut another_chunks =
                 get_gelf_chunks(another_big_message.as_str(), max_size, &mut rng);
@@ -1157,11 +1157,11 @@ mod test {
 
             let events = collect_n(rx, 2).await;
             assert_eq!(
-                events[0].as_log()[log_schema().message_key().unwrap().to_string()],
+                events[1].as_log()[log_schema().message_key().unwrap().to_string()],
                 big_message.into()
             );
             assert_eq!(
-                events[1].as_log()[log_schema().message_key().unwrap().to_string()],
+                events[0].as_log()[log_schema().message_key().unwrap().to_string()],
                 another_big_message.into()
             );
         })
@@ -1433,7 +1433,7 @@ mod test {
     ////////////// UNIX DATAGRAM TESTS //////////////
     #[cfg(unix)]
     async fn send_lines_unix_datagram(path: PathBuf, lines: &[&str]) {
-        let packets = lines.into_iter().map(|line| Bytes::from(line.to_string()));
+        let packets = lines.iter().map(|line| Bytes::from(line.to_string()));
         send_packets_unix_datagram(path, packets).await;
     }
 

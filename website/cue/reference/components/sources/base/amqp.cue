@@ -108,6 +108,11 @@ base: components: sources: amqp: configuration: {
 															[gelf]: https://docs.graylog.org/docs/gelf
 															[implementation]: https://github.com/Graylog2/go-gelf/blob/v2/gelf/reader.go
 															"""
+						influxdb: """
+															Decodes the raw bytes as an [Influxdb Line Protocol][influxdb] message.
+
+															[influxdb]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
+															"""
 						json: """
 															Decodes the raw bytes as [JSON][json].
 
@@ -154,6 +159,22 @@ base: components: sources: amqp: configuration: {
 			gelf: {
 				description:   "GELF-specific decoding options."
 				relevant_when: "codec = \"gelf\""
+				required:      false
+				type: object: options: lossy: {
+					description: """
+						Determines whether or not to replace invalid UTF-8 sequences instead of failing.
+
+						When true, invalid UTF-8 sequences are replaced with the [`U+FFFD REPLACEMENT CHARACTER`][U+FFFD].
+
+						[U+FFFD]: https://en.wikipedia.org/wiki/Specials_(Unicode_block)#Replacement_character
+						"""
+					required: false
+					type: bool: default: true
+				}
+			}
+			influxdb: {
+				description:   "Influxdb-specific decoding options."
+				relevant_when: "codec = \"influxdb\""
 				required:      false
 				type: object: options: lossy: {
 					description: """
@@ -288,7 +309,7 @@ base: components: sources: amqp: configuration: {
 					delimiter: {
 						description: "The character that delimits byte sequences."
 						required:    true
-						type: uint: {}
+						type: ascii_char: {}
 					}
 					max_length: {
 						description: """
@@ -318,7 +339,6 @@ base: components: sources: amqp: configuration: {
 						description: """
 																The maximum number of pending incomplete messages. If this limit is reached, the decoder starts
 																dropping chunks of new messages. This limit ensures the memory usage of the decoder's state is bounded.
-																The default value is 1000.
 																"""
 						required: false
 						type: uint: default: 1000
@@ -327,7 +347,6 @@ base: components: sources: amqp: configuration: {
 						description: """
 																The timeout, in milliseconds, for a message to be fully received. If the timeout is reached, the
 																decoder drops all the received chunks of the incomplete message and starts over.
-																The default value is 5 seconds.
 																"""
 						required: false
 						type: uint: default: 5000
