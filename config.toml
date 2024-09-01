@@ -1,9 +1,12 @@
+[api]
+enabled = true
 [sources.udp]
-type ="socket"
-mode="udp"
-address="0.0.0.0:12201"
+type = "socket"
+mode = "udp"
+address = "0.0.0.0:12201"
+decoding.codec = "gelf"
 
 [sinks.console]
-type="console"
-inputs=["udp"]
-encoding.codec="json"
+type = "console"
+inputs = ["udp"]
+encoding.codec = "json"
