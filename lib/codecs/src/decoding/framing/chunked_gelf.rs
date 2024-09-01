@@ -3,18 +3,28 @@ use crate::{BytesDecoder, StreamDecodingError};
 use super::{BoxedFramingError, FramingError};
 use bytes::{Buf, Bytes, BytesMut};
 use derivative::Derivative;
-use snafu::{ensure, Snafu};
+use flate2::read::{MultiGzDecoder, ZlibDecoder};
+use snafu::{ensure, ResultExt, Snafu};
 use std::any::Any;
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Decoder;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use vector_config::configurable_component;
 
 const GELF_MAGIC: &[u8] = &[0x1e, 0x0f];
+const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b];
+// TODO: zlib detection should be improved, as we are checking a "most common" default header
+// see https://stackoverflow.com/questions/9050260/what-does-a-zlib-header-look-like/54915442#54915442
+// and the zlib rfc
+const ZLIB_MAGIC: &[u8] = &[0x78, 0x9c];
+// TODO: add lz4 compression detection
+// TODO: add zstd compression detection
+
 const GELF_MAX_TOTAL_CHUNKS: u8 = 128;
 const DEFAULT_TIMEOUT_SECS: f64 = 5.0;
 const DEFAULT_PENDING_MESSAGES_LIMIT: usize = 1000;
@@ -41,6 +51,7 @@ impl ChunkedGelfDecoderConfig {
         ChunkedGelfDecoder::new(
             self.chunked_gelf.timeout_secs,
             self.chunked_gelf.pending_messages_limit,
+            self.chunked_gelf.decompression.clone(),
         )
     }
 }
@@ -67,6 +78,37 @@ pub struct ChunkedGelfDecoderOptions {
     )]
     #[derivative(Default(value = "default_pending_messages_limit()"))]
     pub pending_messages_limit: usize,
+
+    /// Decompression configuration for GELF messages.
+    #[serde(default, skip_serializing_if = "vector_core::serde::is_default")]
+    pub decompression: ChunkedGelfDecompressionConfig,
+}
+
+/// Decompression options for ChunkedGelfDecoder.
+#[configurable_component]
+#[derive(Clone, Debug, PartialEq, Eq, Derivative)]
+#[derivative(Default)]
+pub enum ChunkedGelfDecompressionConfig {
+    /// Automatically detect the decompression method based on the magic bytes of the message.
+    #[derivative(Default)]
+    Auto,
+    /// Use Gzip decompression.
+    Gzip,
+    /// Use Zlib decompression.
+    Zlib,
+    /// Do not decompress the message.
+    None,
+}
+
+impl ChunkedGelfDecompressionConfig {
+    pub fn get_decompression(&self, data: &Bytes) -> ChunkedGelfDecompression {
+        match self {
+            Self::Auto => ChunkedGelfDecompression::from_magic(data),
+            Self::Gzip => ChunkedGelfDecompression::Gzip,
+            Self::Zlib => ChunkedGelfDecompression::Zlib,
+            Self::None => ChunkedGelfDecompression::None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -117,6 +159,61 @@ impl MessageState {
     }
 }
 
+pub enum ChunkedGelfDecompression {
+    Gzip,
+    Zlib,
+    None,
+}
+
+impl ChunkedGelfDecompression {
+    pub fn from_magic(data: &Bytes) -> Self {
+        if data.starts_with(GZIP_MAGIC) {
+            debug!("Detected Gzip compression");
+            Self::Gzip
+        } else if data.starts_with(ZLIB_MAGIC) {
+            debug!("Detected Zlib compression");
+            Self::Zlib
+        } else {
+            debug!(
+                "No compression detected. First two bytes of data: {:?}",
+                data.get(0..2)
+            );
+            Self::None
+        }
+    }
+
+    pub fn decompress(&self, data: Bytes) -> Result<Bytes, ChunkedGelfDecompressionError> {
+        let decompressed = match self {
+            Self::Gzip => {
+                let mut decoder = MultiGzDecoder::new(data.reader());
+                let mut decompressed = Vec::new();
+                decoder
+                    .read_to_end(&mut decompressed)
+                    .expect("TODO: handle error");
+                Bytes::from(decompressed)
+            }
+            Self::Zlib => {
+                let mut decoder = ZlibDecoder::new(data.reader());
+                let mut decompressed = Vec::new();
+                decoder
+                    .read_to_end(&mut decompressed)
+                    .expect("TODO: handle error");
+                Bytes::from(decompressed)
+            }
+            Self::None => data,
+        };
+        Ok(decompressed)
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum ChunkedGelfDecompressionError {
+    #[snafu(display("Gzip decompression error: {}", source))]
+    GzipDecompressionError { source: flate2::DecompressError },
+    #[snafu(display("Zlib decompression error: {}", source))]
+    ZlibDecompressionError { source: flate2::DecompressError },
+}
+
 #[derive(Debug, Snafu)]
 pub enum ChunkedGelfDecoderError {
     #[snafu(display("Invalid chunk header with less than 10 bytes: {header:?}"))]
@@ -146,6 +243,10 @@ pub enum ChunkedGelfDecoderError {
         original_total_chunks: u8,
         received_total_chunks: u8,
     },
+    #[snafu(display("Error while decompressing message: {source}"))]
+    DecompressionError {
+        source: ChunkedGelfDecompressionError,
+    },
 }
 
 impl StreamDecodingError for ChunkedGelfDecoderError {
@@ -170,6 +271,7 @@ pub struct ChunkedGelfDecoder {
     // This limitation is due to the fact that the GELF format does not specify the length of the
     // message, so we have to read all the bytes from the message (datagram)
     bytes_decoder: BytesDecoder,
+    decompression_config: ChunkedGelfDecompressionConfig,
     state: Arc<Mutex<HashMap<u64, MessageState>>>,
     timeout: Duration,
     pending_messages_limit: usize,
@@ -177,9 +279,14 @@ pub struct ChunkedGelfDecoder {
 
 impl ChunkedGelfDecoder {
     /// Creates a new `ChunkedGelfDecoder`.
-    pub fn new(timeout_secs: f64, pending_messages_limit: usize) -> Self {
+    pub fn new(
+        timeout_secs: f64,
+        pending_messages_limit: usize,
+        decompression_config: ChunkedGelfDecompressionConfig,
+    ) -> Self {
         Self {
             bytes_decoder: BytesDecoder::new(),
+            decompression_config,
             state: Arc::new(Mutex::new(HashMap::new())),
             timeout: Duration::from_secs_f64(timeout_secs),
             pending_messages_limit,
@@ -300,18 +407,37 @@ impl ChunkedGelfDecoder {
         &mut self,
         mut src: Bytes,
     ) -> Result<Option<Bytes>, ChunkedGelfDecoderError> {
-        if src.starts_with(GELF_MAGIC) {
+        let message = if src.starts_with(GELF_MAGIC) {
+            debug!("Received a chunked GELF message based on the magic bytes");
             src.advance(2);
-            self.decode_chunk(src)
+            self.decode_chunk(src)?
         } else {
-            Ok(Some(src))
-        }
+            debug!(
+                "Received an unchunked GELF message. First two bytes of message: {:?}",
+                &src[0..2]
+            );
+            Some(src)
+        };
+
+        // We can have both chunked and unchunked messages that are compressed
+        message
+            .map(|message| {
+                self.decompression_config
+                    .get_decompression(&message)
+                    .decompress(message)
+                    .context(DecompressionSnafu)
+            })
+            .transpose()
     }
 }
 
 impl Default for ChunkedGelfDecoder {
     fn default() -> Self {
-        Self::new(DEFAULT_TIMEOUT_SECS, DEFAULT_PENDING_MESSAGES_LIMIT)
+        Self::new(
+            DEFAULT_TIMEOUT_SECS,
+            DEFAULT_PENDING_MESSAGES_LIMIT,
+            ChunkedGelfDecompressionConfig::default(),
+        )
     }
 }
 
@@ -633,7 +759,11 @@ mod tests {
         let pending_messages_limit = 1;
         let (mut two_chunks, _) = two_chunks_message;
         let (mut three_chunks, _) = three_chunks_message;
-        let mut decoder = ChunkedGelfDecoder::new(DEFAULT_TIMEOUT_SECS, pending_messages_limit);
+        let mut decoder = ChunkedGelfDecoder::new(
+            DEFAULT_TIMEOUT_SECS,
+            pending_messages_limit,
+            ChunkedGelfDecompressionConfig::default(),
+        );
 
         let frame = decoder.decode_eof(&mut two_chunks[0]).unwrap();
         assert!(frame.is_none());

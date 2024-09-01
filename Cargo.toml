@@ -132,6 +132,7 @@ members = [
 [workspace.dependencies]
 chrono = { version = "0.4.38", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.5.16", default-features = false, features = ["derive", "error-context", "env", "help", "std", "string", "usage", "wrap_help"] }
+flate2 = { version = "1.0.32", default-features = false, features = ["default"] }
 indexmap = { version = "2.4.0", default-features = false, features = ["serde", "std"] }
 metrics = "0.22.3"
 metrics-tracing-context = { version = "0.15.0", default-features = false }
@@ -286,7 +287,7 @@ dyn-clone = { version = "1.0.17", default-features = false }
 encoding_rs = { version = "0.8.34", default-features = false, features = ["serde"] }
 enum_dispatch = { version = "0.3.13", default-features = false }
 exitcode = { version = "1.1.2", default-features = false }
-flate2 = { version = "1.0.32", default-features = false, features = ["default"] }
+flate2.workspace = true
 futures-util = { version = "0.3.29", default-features = false }
 glob = { version = "0.3.1", default-features = false }
 governor = { version = "0.6.3", default-features = false, features = ["dashmap", "jitter", "std"], optional = true }
