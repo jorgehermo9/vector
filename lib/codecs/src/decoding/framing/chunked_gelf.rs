@@ -388,9 +388,7 @@ impl ChunkedGelfDecoder {
         &mut self,
         mut src: Bytes,
     ) -> Result<Option<Bytes>, ChunkedGelfDecoderError> {
-        let magic = src.get(0..2);
-        if magic.is_some_and(|magic| magic == GELF_MAGIC) {
-            dbg!("chunked");
+        if src.starts_with(GELF_MAGIC) {
             src.advance(2);
             self.decode_chunk(src)
         } else {
@@ -452,7 +450,7 @@ mod tests {
         payload: &str,
     ) -> BytesMut {
         let mut chunk = BytesMut::new();
-        chunk.put_slice(&GELF_MAGIC);
+        chunk.put_slice(GELF_MAGIC);
         chunk.put_u64(message_id);
         chunk.put_u8(sequence_number);
         chunk.put_u8(total_chunks);
@@ -663,7 +661,7 @@ mod tests {
     #[traced_test]
     async fn decode_chunk_with_invalid_header() {
         let mut src = BytesMut::new();
-        src.extend_from_slice(&GELF_MAGIC);
+        src.extend_from_slice(GELF_MAGIC);
         // Invalid chunk header with less than 10 bytes
         let invalid_chunk = [0x12, 0x34];
         src.extend_from_slice(&invalid_chunk);
