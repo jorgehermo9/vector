@@ -2181,6 +2181,7 @@ dependencies = [
  "bytes 1.7.2",
  "chrono",
  "csv-core",
+ "dashmap 6.1.0",
  "derivative",
  "dyn-clone",
  "futures 0.3.31",

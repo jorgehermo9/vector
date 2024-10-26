@@ -2,11 +2,11 @@ use crate::{BytesDecoder, StreamDecodingError};
 
 use super::{BoxedFramingError, FramingError};
 use bytes::{Buf, Bytes, BytesMut};
+use dashmap::DashMap;
 use derivative::Derivative;
 use snafu::{ensure, Snafu};
 use std::any::Any;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio;
 use tokio::task::JoinHandle;
@@ -205,7 +205,7 @@ pub struct ChunkedGelfDecoder {
     // This limitation is due to the fact that the GELF format does not specify the length of the
     // message, so we have to read all the bytes from the message (datagram)
     bytes_decoder: BytesDecoder,
-    state: Arc<Mutex<HashMap<u64, MessageState>>>,
+    state: Arc<DashMap<u64, MessageState>>,
     timeout: Duration,
     pending_messages_limit: Option<usize>,
     max_chunk_length: Option<usize>,
@@ -222,7 +222,7 @@ impl ChunkedGelfDecoder {
     ) -> Self {
         Self {
             bytes_decoder: BytesDecoder::new(),
-            state: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(DashMap::new()),
             timeout: Duration::from_secs_f64(timeout_secs),
             pending_messages_limit,
             max_chunk_length,
@@ -276,11 +276,9 @@ impl ChunkedGelfDecoder {
             }
         );
 
-        let mut state_lock = self.state.lock().expect("poisoned lock");
-
         if let Some(pending_messages_limit) = self.pending_messages_limit {
             ensure!(
-                state_lock.len() < pending_messages_limit,
+                self.state.len() < pending_messages_limit,
                 PendingMessagesLimitReachedSnafu {
                     message_id,
                     sequence_number,
@@ -289,15 +287,14 @@ impl ChunkedGelfDecoder {
             );
         }
 
-        let message_state = state_lock.entry(message_id).or_insert_with(|| {
+        let mut message_state = self.state.entry(message_id).or_insert_with(|| {
             // We need to spawn a task that will clear the message state after a certain time
             // otherwise we will have a memory leak due to messages that never complete
             let state = Arc::clone(&self.state);
             let timeout = self.timeout;
             let timeout_handle = tokio::spawn(async move {
                 tokio::time::sleep(timeout).await;
-                let mut state_lock = state.lock().expect("poisoned lock");
-                if state_lock.remove(&message_id).is_some() {
+                if state.remove(&message_id).is_some() {
                     warn!(
                         message_id = message_id,
                         timeout_secs = timeout.as_secs_f64(),
@@ -347,7 +344,7 @@ impl ChunkedGelfDecoder {
         if let Some(max_message_length) = self.max_message_length {
             let message_length = message_state.current_message_length();
             if message_length > max_message_length {
-                state_lock.remove(&message_id);
+                self.state.remove(&message_id);
                 return Err(ChunkedGelfDecoderError::MaxMessageLengthExceeded {
                     message_id,
                     sequence_number,
@@ -358,7 +355,7 @@ impl ChunkedGelfDecoder {
         }
 
         if let Some(message) = message_state.retrieve_message() {
-            state_lock.remove(&message_id);
+            self.state.remove(&message_id);
             Ok(Some(message))
         } else {
             Ok(None)
@@ -665,11 +662,11 @@ mod tests {
 
         let frame = decoder.decode_eof(&mut chunks[0]).unwrap();
         assert!(frame.is_none());
-        assert!(!decoder.state.lock().unwrap().is_empty());
+        assert!(!decoder.state.is_empty());
 
         // The message state should be cleared after a certain time
         tokio::time::sleep(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECS + 1.0)).await;
-        assert!(decoder.state.lock().unwrap().is_empty());
+        assert!(decoder.state.is_empty());
         assert!(logs_contain(
             "Message was not fully received within the timeout window. Discarding it."
         ));
@@ -678,7 +675,7 @@ mod tests {
         assert!(frame.is_none());
 
         tokio::time::sleep(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECS + 1.0)).await;
-        assert!(decoder.state.lock().unwrap().is_empty());
+        assert!(decoder.state.is_empty());
         assert!(logs_contain(
             "Message was not fully received within the timeout window. Discarding it"
         ));
@@ -769,7 +766,7 @@ mod tests {
 
         let frame = decoder.decode_eof(&mut two_chunks[0]).unwrap();
         assert!(frame.is_none());
-        assert!(decoder.state.lock().unwrap().len() == 1);
+        assert!(decoder.state.len() == 1);
 
         let frame = decoder.decode_eof(&mut three_chunks[0]);
         let error = frame.unwrap_err();
@@ -782,7 +779,7 @@ mod tests {
                 pending_messages_limit: 1,
             }
         );
-        assert!(decoder.state.lock().unwrap().len() == 1);
+        assert!(decoder.state.len() == 1);
     }
 
     #[rstest]
@@ -836,7 +833,7 @@ mod tests {
                 max_chunk_length: 1,
             }
         );
-        assert_eq!(decoder.state.lock().unwrap().len(), 0);
+        assert_eq!(decoder.state.len(), 0);
     }
 
     #[rstest]
@@ -849,6 +846,7 @@ mod tests {
 
         let frame = decoder.decode_eof(&mut chunks[0]).unwrap();
         assert!(frame.is_none());
+
         let frame = decoder.decode_eof(&mut chunks[1]);
         let error = frame.unwrap_err();
         let downcasted_error = downcast_framing_error(&error);
@@ -861,7 +859,7 @@ mod tests {
                 max_message_length: 5,
             }
         );
-        assert_eq!(decoder.state.lock().unwrap().len(), 0);
+        assert_eq!(decoder.state.len(), 0);
     }
 
     #[rstest]
