@@ -7267,13 +7267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portpicker"
-version = "1.0.0"
-dependencies = [
- "rand 0.8.5",
-]
-
-[[package]]
 name = "postgres-openssl"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11104,7 +11097,6 @@ dependencies = [
  "paste",
  "percent-encoding",
  "pin-project",
- "portpicker",
  "postgres-openssl",
  "proptest",
  "proptest-derive",
@@ -11461,7 +11453,6 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "glob",
- "portpicker",
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "tokio",

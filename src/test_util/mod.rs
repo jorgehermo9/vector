@@ -20,7 +20,6 @@ use chrono::{DateTime, SubsecRound, Utc};
 use flate2::read::MultiGzDecoder;
 use futures::{stream, task::noop_waker_ref, FutureExt, SinkExt, Stream, StreamExt, TryStreamExt};
 use openssl::ssl::{SslConnector, SslFiletype, SslMethod, SslVerifyMode};
-use portpicker::pick_unused_port;
 use rand::{thread_rng, Rng};
 use rand_distr::Alphanumeric;
 use tokio::{
@@ -112,8 +111,7 @@ pub fn open_fixture(path: impl AsRef<Path>) -> crate::Result<serde_json::Value> 
 }
 
 pub fn next_addr_for_ip(ip: IpAddr) -> SocketAddr {
-    let port = pick_unused_port(ip);
-    SocketAddr::new(ip, port)
+    SocketAddr::new(ip, 0)
 }
 
 pub fn next_addr() -> SocketAddr {

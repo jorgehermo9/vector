@@ -111,7 +111,6 @@ members = [
   "lib/k8s-e2e-tests",
   "lib/k8s-test-framework",
   "lib/loki-logproto",
-  "lib/portpicker",
   "lib/prometheus-parser",
   "lib/opentelemetry-proto",
   "lib/tracing-limit",
@@ -183,7 +182,6 @@ cfg-if.workspace = true
 dnsmsg-parser = { path = "lib/dnsmsg-parser", optional = true }
 dnstap-parser = { path = "lib/dnstap-parser", optional = true }
 fakedata = { path = "lib/fakedata", optional = true }
-portpicker = { path = "lib/portpicker" }
 tracing-limit = { path = "lib/tracing-limit" }
 vector-common = { path = "lib/vector-common", default-features = false}
 vector-lib.workspace = true
