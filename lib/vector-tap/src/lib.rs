@@ -262,7 +262,7 @@ impl<'a> TapRunner<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use chrono::Utc;
     use futures_util::sink::SinkExt;
@@ -272,8 +272,6 @@ mod tests {
     use tokio::time::sleep;
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
-
-    use portpicker::pick_unused_port;
 
     use super::*;
 
@@ -287,10 +285,10 @@ mod tests {
 
         // Start a local WebSocket server to mimic Vector GraphQL API
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = pick_unused_port(ip_addr);
-        let addr = format!("{ip_addr}:{port}");
-
+        let addr = SocketAddr::new(ip_addr, 0);
         let listener = TcpListener::bind(&addr).await.unwrap();
+        // As we used port number 0 as `TcpListener` arguments, we have to get the actual port the listener is bound to
+        let local_addr = listener.local_addr().expect("Failed to get local address");
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut ws_stream = accept_async(stream).await.unwrap();
@@ -331,7 +329,7 @@ mod tests {
         });
 
         let (output_tx, mut output_rx) = tokio_mpsc::channel(10);
-        let url = Url::parse(&format!("ws://{addr}")).unwrap();
+        let url = Url::parse(&format!("ws://{local_addr}")).unwrap();
         let output_channel = OutputChannel::AsyncChannel(output_tx);
 
         let tap_runner = TapRunner::new(
@@ -341,7 +339,7 @@ mod tests {
             &output_channel,
             TapEncodingFormat::Json,
         );
-        assert!(tap_runner.run_tap(0, 0, Some(5000), false).await.is_ok());
+        assert!(dbg!(tap_runner.run_tap(0, 0, Some(5000), false).await).is_ok());
 
         let mut num_recv = 0;
         while let Ok(events) = output_rx.try_recv() {
