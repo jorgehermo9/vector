@@ -2,12 +2,12 @@ name: Unit - Windows
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   statuses: write
 
 jobs:
-
   test-windows:
     runs-on: windows-2022-8core
     timeout-minutes: 60
